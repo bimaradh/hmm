@@ -1,0 +1,531 @@
+PrintChat("Gagong Syndra GoS")
+-- CREATE MENU
+local mainMenu = menu.addItem(SubMenu.new("Gagong Syndra"))
+
+-- GENERAL MENU
+local comboMenu = mainMenu.addItem(SubMenu.new("Combo"))
+local harassMenu = mainMenu.addItem(SubMenu.new("Harass"))
+local ksMenu = mainMenu.addItem(SubMenu.new("Kill Steal"))
+local targetMenu = mainMenu.addItem(SubMenu.new("Priorities"))
+local ssMenu = mainMenu.addItem(SubMenu.new("Prevent SS"))
+local extraMenu = mainMenu.addItem(SubMenu.new("Extra"))
+
+-- SUB MENU
+local combo = {
+    Q = comboMenu.addItem(MenuBool.new("Use Q"),true),
+    W = comboMenu.addItem(MenuBool.new("Use W"),true),
+    E = comboMenu.addItem(MenuBool.new("Use E"),true),
+    R = comboMenu.addItem(MenuBool.new("Use R"),true),
+    QE = comboMenu.addItem(MenuBool.new("Use QE"),true),
+    QEM = comboMenu.addItem(MenuKeyBind.new("QE to mouse! Hold: ", string.byte("T"))),
+    comboKey = comboMenu.addItem(MenuKeyBind.new("Combo Key: ", 32)),
+    overrideKey = comboMenu.addItem(MenuKeyBind.new("Override Key: ", string.byte("V")))
+}
+local harass = {
+    QA = harassMenu.addItem(MenuBool.new("Auto Q"),true),
+    WA = harassMenu.addItem(MenuBool.new("Auto W")),
+    Q = harassMenu.addItem(MenuBool.new("Use Q"),true),
+    W = harassMenu.addItem(MenuBool.new("Use W"),true),
+    E = harassMenu.addItem(MenuBool.new("Use E")),
+    QE = harassMenu.addItem(MenuBool.new("Use QE")),
+    MANA = harassMenu.addItem(MenuSlider.new("Percent Mana above ", 0, 0, 100, 5)),
+    harassKey = harassMenu.addItem(MenuKeyBind.new("Harass Key: ", string.byte("C")))
+}
+local ks = {
+    Q = ksMenu.addItem(MenuBool.new("Use Q"),true),
+    W = ksMenu.addItem(MenuBool.new("Use W"),true),
+    E = ksMenu.addItem(MenuBool.new("Use E"),true),
+    R = ksMenu.addItem(MenuBool.new("Use R")),
+    QE = ksMenu.addItem(MenuBool.new("Use QE"))
+}
+local targetP = {targetMenu.addItem(MenuSeparator.new("5 is most wanted"))}
+local ss = {ssMenu.addItem(MenuSeparator.new("Ignore the FF")) }
+delay(function()
+    for i,enemy in pairs(GetEnemyHeroes()) do
+        targetP[GetObjectName(enemy)] = targetMenu.addItem(MenuSlider.new(GetObjectName(enemy)..": ", 1, 1, 5, 1))
+        ss[GetObjectName(enemy)] = ssMenu.addItem(MenuBool.new(GetObjectName(enemy)))
+    end
+end, 500)
+local extra = {
+    --FLASH = extraMenu.addItem(MenuBool.new("Use Smart Flash Kill Steal"),true),
+    --IGNITE = extraMenu.addItem(MenuBool.new("Use Smart Ignite"),true),
+    QPARAM = extraMenu.addItem(MenuBool.new("Draw Q Parameters"),true),
+    QEPARAM = extraMenu.addItem(MenuBool.new("Draw QE Parameters"),true),
+    SECOND = extraMenu.addItem(MenuBool.new("Circle on Secondary Target"),true),
+    --WPARAM = extraMenu.addItem(MenuBool.new("Draw W Parameters"),true),
+    --HPBARFILL = extraMenu.addItem(MenuBool.new("HP Bar Fill Damage"),true),
+    NOTIFICATION = extraMenu.addItem(MenuBool.new("Notifications"),true),
+    MOVE = extraMenu.addItem(MenuBool.new("Use F7 Harass/Combo (C)"))
+}
+
+-- END OF MENUS
+myHero = GetMyHero()
+orbs = {}
+notificationTimers = {}
+scriptStart = GetTickCount()
+lastCastQ = 0
+lastCastW = 0
+lastCastE = 0
+lastCastQE = 0
+stopMove = false
+Targets = {}
+DamageToTargets = {}
+
+OnLoop(function(myHero)
+    damageToEnemies()
+    Drawings()
+    if extra.NOTIFICATION.getValue() then alerts() end
+    Killsteal()
+    -- QE to mouse
+    if GetTickCount() - scriptStart > GetLatency() + 500 then TargetSelector() end
+    if combo.QEM.getValue() then useQE(false,true) end
+    -- auto harass
+    if isRecall() then notification("recalling") end
+    if harass.QA.getValue() and not isRecall() then useQ(Targets["Q"]) end
+    if harass.WA.getValue() and not isRecall() then useW(Targets["W"]) end
+    -- combo
+    if combo.comboKey.getValue() or combo.overrideKey.getValue() then
+        syndraCombo()
+        Move()
+    end
+    if harass.harassKey.getValue() and GetCurrentMana(myHero)/GetMaxMana(myHero)*100 > harass.MANA.getValue() then
+        syndraHarass()
+        if not extra.MOVE.getValue() then Move() end
+    end
+
+end)
+function isRecall()
+    return false
+end
+function notify(msg,type,sleep,duration,red)
+    local fcolor = 0xFF71D450
+    if not notificationTimers[type] then notificationTimers[type] = 0 end
+    if red then fcolor = 0xFFFF1133 end
+    if msg and GetTickCount() - notificationTimers[type] > sleep then
+        notification(msg, duration,false,false,fcolor)
+        notificationTimers[type] = GetTickCount()
+    end
+end
+
+function syndraCombo()
+    if combo.E.getValue() then useE(Targets["QE"]) end
+    if combo.QE.getValue() then useQE(Targets["QE"]) end
+    if combo.Q.getValue() then useQ(Targets["Q"]) end
+    if combo.W.getValue() then useW(Targets["W"]) end
+    if combo.R.getValue() then useR(Targets["R"],"combo") end
+end
+
+function syndraHarass()
+    if harass.E.getValue() then useE(Targets["QE"]) end
+    if harass.QE.getValue() then useQE(Targets["QE"]) end
+    if harass.Q.getValue() then useQ(Targets["Q"]) end
+    if harass.W.getValue() then useW(Targets["W"]) end
+end
+
+function alerts()
+    for i,enemy in pairs(GetEnemyHeroes()) do
+        if GetCurrentHP(enemy) < DamageToTargets[GetObjectName(enemy)] then
+            notify(GetObjectName(enemy).." : KILLABLE!  ",GetObjectName(enemy),20000,8000,true)
+        end
+    end
+    if combo.overrideKey.getValue() then notify("Override Activated","OVERRIDE",10000,5000) end
+end
+function damageToEnemies()
+    local totalDamage
+    for i,enemy in pairs(GetEnemyHeroes()) do
+        DamageToTargets[GetObjectName(enemy)] = 0
+        totalDamage = 0
+        if IsObjectAlive(enemy) and IsVisible(enemy) then
+            DamageToTargets[GetObjectName(enemy)] = ComboDamage(enemy,true,"combo")
+        end
+    end
+end
+function TargetSelector()
+    local skills = {"Q","W","E","R","QE" }
+    local eDistance
+    -- main target prediction
+    for i,enemy in pairs(GetEnemyHeroes()) do
+        if IsObjectAlive(enemy) and IsVisible(enemy) and GetDistance(enemy) < 2000 then
+            for _, skill in pairs(skills) do
+                eDistance = GetDistance(enemy)
+                if eDistance < SkillRange(skill) then
+                    if not Targets[skill] then
+                        Targets[skill] = enemy
+                    else
+                        if targetP[GetObjectName(enemy)].getValue() > targetP[GetObjectName(Targets[skill])].getValue() then Targets[skill] = enemy
+                        elseif targetP[GetObjectName(enemy)].getValue() == targetP[GetObjectName(Targets[skill])].getValue() then
+                            if (GetCurrentHP(enemy) - DamageToTargets[GetObjectName(enemy)])/GetMaxHP(enemy) < (GetCurrentHP(Targets[skill]) - DamageToTargets[GetObjectName(Targets[skill])])/GetMaxHP(Targets[skill]) then
+                                Targets[skill] = enemy
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            for _, skill in pairs(skills) do
+                if Targets[skill] == enemy then Targets[skill] = nil  end
+            end
+        end
+    end
+end
+function SkillRange(skill)
+    if skill == "Q" then return GetCastRange(myHero,_Q) end
+    if skill == "W" then return GetCastRange(myHero,_W) end
+    if skill == "E" then return GetCastRange(myHero,_E) end
+    if skill == "R" then return GetCastRange(myHero,_R) end
+    if skill == "QE" then return 1200 end
+end
+function Killsteal()
+    local eDistance
+    local enemyHP
+    for i,enemy in pairs(GetEnemyHeroes()) do
+        if IsObjectAlive(enemy) and IsVisible(enemy) and GetDistance(enemy) < 2000 then
+            enemyHP = GetCurrentHP(enemy)
+            eDistance = GetDistance(enemy)
+            if DamageToTargets[GetObjectName(enemy)]> enemyHP then
+                notify("Kill Steal Activated","ks",10000,5000)
+                if ks.Q.getValue() and eDistance <= SkillRange("Q") then useQ(enemy) end
+                if ComboDamage(enemy,false,"combo") < GetCurrentHP(enemy) then
+                    if ks.R.getValue() and eDistance <= SkillRange("R") then CastTargetSpell(target, _R) end
+                end
+                if ks.E.getValue() then useE(enemy) end
+                if ks.QE.getValue() and SkillDamage("e",enemy) > GetCurrentHP(enemy) and eDistance <= SkillRange("QE") then useQE(enemy) end
+                if ks.W.getValue() and eDistance <= SkillRange("W") then useW(enemy) end
+                if ks.E.getValue() and SkillDamage("e",enemy) > GetCurrentHP(enemy) then useE(enemy,true) end
+                if eDistance < GetRange(myHero) then AttackUnit(enemy) end
+            end
+        end
+    end
+end
+
+function useQ(target)
+    local targetPred = GetPredictionForPlayer(GetMyHeroPos(),target,GetMoveSpeed(target),10000,600,GetCastRange(myHero,_Q),150,false,true)
+    if CanUseSpell(myHero, _Q) == READY and IsObjectAlive(target) then
+        if targetPred.HitChance == 1 then
+            CastSkillShot(_Q,targetPred.PredPos.x,targetPred.PredPos.y,targetPred.PredPos.z)
+            lastCastQ = GetTickCount()
+        end
+    end
+end
+
+function useW(target)
+    local targetPred = GetPredictionForPlayer(GetMyHeroPos(),target,GetMoveSpeed(target),1300,600,GetCastRange(myHero,_W),100,false,true)
+    if CanUseSpell(myHero, _W) == READY and GetGrabableObject() and IsObjectAlive(target) then
+        if targetPred.HitChance == 1 then
+            --W1
+            if GetCastName(myHero,_W) == "SyndraW" and GetTickCount() - lastCastQ > GetLatency() + 150 and GetTickCount() - lastCastW > GetLatency() + 150 and GetTickCount() - lastCastE > GetLatency() + 150 then
+                CastSkillShot(_W,GetGrabableObject())
+                lastCastW = GetTickCount()
+            end
+        end
+    end
+    --W2
+    if GetCastName(myHero,_W) == "syndrawcast" and GetTickCount() - lastCastW > GetLatency() and GetTickCount() - lastCastE > GetLatency() + 150 then
+        CastSkillShot(_W,targetPred.PredPos.x,targetPred.PredPos.y,targetPred.PredPos.z)
+    end
+end
+
+function useE(target,withoutOrb)
+    local manaLeft = GetCurrentMana(myHero)-GetCastMana(myHero,_E,GetCastLevel(myHero,_E))
+    if IsObjectAlive(target) and CanUseSpell(myHero, _E) == READY and manaLeft >= 0 then
+        if withoutOrb then
+            if GetDistance(target) <= GetCastRange(myHero,_E) then
+                local origin = Vector(target)
+                CastSkillShot(_E,origin.x,origin.y,origin.z)
+            end
+        elseif GetTickCount() - lastCastW > GetLatency() + 150 then
+            local targetPred = GetPredictionForPlayer(GetMyHeroPos(),target,GetMoveSpeed(target),7000,900,1200,55,false,true)
+            for _, orb in pairs(orbs) do
+                local orbDistance = GetDistance(orb)
+                if IsObjectAlive(orb) and targetPred.HitChance == 1 and orbDistance <= GetCastRange(myHero,_E) then
+                    local orbPos = Vector(GetOrigin(orb))
+                    local TargetHolder = Vector(target)
+                    TargetHolder.x = targetPred.PredPos.x
+                    TargetHolder.y = targetPred.PredPos.y
+                    TargetHolder.z = targetPred.PredPos.z
+                    local TargetPred2d = WorldToScreen(1,TargetHolder)
+                    local myHero2d = WorldToScreen(1,GetOrigin(myHero))
+                    local orb2d = WorldToScreen(1,GetOrigin(orb))
+                    local radius = GetHitBox(myHero)/2 + GetHitBox(orb)/2
+                    if checkCircleIntersect(myHero2d,TargetPred2d,orb2d,radius) then
+                        stopMove = true
+                        HoldPosition()
+                        CastSkillShot(_E,orbPos.x,orbPos.y,orbPos.z)
+                        lastCastE = GetTickCount()
+                    end
+                    stopMove = false
+                    Move()
+                end
+            end
+        end
+    end
+end
+
+function useR(target,type)
+    if IsObjectAlive(target) and IsVisible(target) and GetTickCount() - lastCastQ > GetLatency() and GetTickCount() - lastCastW > GetLatency() and GetTickCount() - lastCastE > GetLatency() then
+        if combo.overrideKey.getValue() or (ComboDamage(target,false,type) < GetCurrentHP(target) and not ss[GetObjectName(target)].getValue()) then
+            if combo.overrideKey.getValue() or (ComboDamage(target,true,type) > GetCurrentHP(target) and GetDistance(target) <= GetCastRange(myHero,_R)) then
+                CastTargetSpell(target, _R)
+            end
+        end
+    end
+end
+
+function useQE(target,useMousePos)
+    local targetPred
+    if IsObjectAlive(target) and IsVisible(target) then targetPred = GetPredictionForPlayer(GetMyHeroPos(),target,GetMoveSpeed(target),7000,900,1200,55,false,true) end
+    local manaLeft = GetCurrentMana(myHero)-GetCastMana(myHero,_Q,GetCastLevel(myHero,_Q))-GetCastMana(myHero,_E,GetCastLevel(myHero,_E))
+    if manaLeft >= 0 and CanUseSpell(myHero, _Q) == READY and CanUseSpell(myHero, _E) == READY and (IsObjectAlive(target) and IsVisible(target) or useMousePos) and GetTickCount() - lastCastQ > GetLatency() + 150 and GetTickCount() - lastCastE > GetLatency() + 150 then
+        local TargetV
+        local orbPos = 350
+        if IsObjectAlive(target) then
+            TargetV = Vector(target)
+            TargetV.x = targetPred.PredPos.x
+            TargetV.y = targetPred.PredPos.y
+            TargetV.z = targetPred.PredPos.z
+            if GetDistance(TargetV) <= GetCastRange(myHero,_E) then orbPos = GetDistance(TargetV) - 50 end
+        end
+        if useMousePos then TargetV = Vector(GetMousePos()) end
+        local myHeroV = Vector(myHero);
+        local distanceP = orbPos/GetDistance(TargetV)
+        local qPos = myHeroV + (TargetV-myHeroV)*distanceP
+        DelayAction(function() CastSkillShot(_E,qPos.x,qPos.y,qPos.z); stopMove = false; Move() end , GetLatency() + 150)
+        CastSkillShot(_Q,qPos.x,qPos.y,qPos.z)
+        stopMove = true
+        HoldPosition()
+        lastCastQ = GetTickCount()
+        lastCastE = GetTickCount()
+        lastCastQE = GetTickCount()
+    end
+end
+
+function SkillDamage(skill,target)
+    local numSpheres = 0
+    for _, orb in pairs(orbs) do
+        if IsObjectAlive(orb) then numSpheres = numSpheres + 1 end
+    end
+
+    local dmg = 0
+    if skill == "q" and CanUseSpell(myHero, _Q) == READY then
+        dmg = 5+(GetCastLevel(myHero,_Q)*45)+(GetBonusAP(myHero)*0.6)
+        if GetCastLevel(myHero,_Q) == 4 then dmg = dmg * 1.15 end
+    elseif skill == "w" and CanUseSpell(myHero, _W) == READY then dmg = 40+(GetCastLevel(myHero,_W)*40)+(GetBonusAP(myHero)*0.7)
+    elseif skill == "e" and CanUseSpell(myHero, _E) == READY then dmg = 25+(GetCastLevel(myHero,_E)*45)+(GetBonusAP(myHero)*0.4)
+    elseif skill == "r" and CanUseSpell(myHero, _R) == READY then dmg = 135+(GetCastLevel(myHero,_R)*135)+(GetBonusAP(myHero)*0.6)+(45+(45*GetCastLevel(myHero,_R)))*numSpheres+(GetBonusAP(myHero)*0.2)
+    end
+    if IsObjectAlive(target) then return CalcDamage(myHero, target, dmg) else return 0 end
+end
+
+function ComboDamage(target,withR,type)
+    local totalDamage = 0
+    local myMana = GetCurrentMana(myHero)
+    local qMana = GetCastLevel(myHero,_Q) * 10 + 30
+    local wMana = GetCastLevel(myHero,_W) * 10 + 50
+    local eMana = 50
+    local rMana = 100
+    local uQ, uW, uE, uR
+    if type == "ks" then
+        if ks.Q.getValue() then uQ = true end
+        if ks.W.getValue() then uW = true end
+        if ks.E.getValue() then uE = true end
+        if ks.R.getValue() then uR = true end
+    elseif type == "combo" then
+        if combo.Q.getValue() then uQ = true end
+        if combo.W.getValue() then uW = true end
+        if combo.E.getValue() then uE = true end
+        if combo.R.getValue() then uR = true end
+    end
+
+    if uR and withR and CanUseSpell(myHero, _R) == READY then
+        if myMana >= rMana then
+            totalDamage = totalDamage + SkillDamage("r",target)
+            myMana = myMana - rMana
+        end
+    end
+    if uW and CanUseSpell(myHero, _W) == READY then
+        if myMana >= wMana then
+            totalDamage = totalDamage + SkillDamage("w",target)
+            myMana = myMana - wMana
+        end
+    end
+    if uQ and CanUseSpell(myHero, _Q) == READY then
+        if myMana >= qMana then
+            totalDamage = totalDamage + SkillDamage("q",target)
+            myMana = myMana - qMana
+        end
+    end
+    if uE and CanUseSpell(myHero, _E) == READY then
+        if myMana >= eMana then
+            totalDamage = totalDamage + SkillDamage("e",target)
+            myMana = myMana - eMana
+        end
+    end
+
+    return totalDamage*0.95 - GetMagicShield(target) - GetDmgShield(target) + CalcDamage(myHero, target, GetBaseDamage(myHero) + GetBonusDmg(myHero))
+end
+
+function Drawings()
+    local qePred = GetPredictionForPlayer(GetMyHeroPos(),Targets["QE"],GetMoveSpeed(Targets["QE"]),7000,900,1200,55,false,true)
+    if Targets["QE"] and CanUseSpell(myHero, _Q) == READY and CanUseSpell(myHero, _E) == READY and extra.QEPARAM.getValue() then
+        local c1 = 0xfffffff0
+        local c2 = 0xffff0000
+        local c3 = 0xffff0000
+        if qePred.HitChance == 1 then
+            c1 = 0xfffffff0
+            c2 = 0xff00ff00
+            c3 = 0xff00ff00
+        end
+        local pos = Vector(Targets["QE"])
+        if GetDistance(Targets["QE"]) <= 1200 then
+            DrawCircle(qePred.PredPos.x,qePred.PredPos.y,qePred.PredPos.z,55,3,100,c1)
+            DrawCircle(qePred.PredPos.x,qePred.PredPos.y,qePred.PredPos.z,65,3,100,c2)
+            DrawCircle(pos.x,pos.y,pos.z,45,3,100,c3)
+        end
+        --  DrawText(string.format("NetworkID = 0x%X", GetNetworkID(Object)),prediction["QE"].PredPos.x,prediction["QE"].PredPos.y,prediction["QE"].PredPos.z,0xffffffff);
+    end
+    local qPred = GetPredictionForPlayer(GetMyHeroPos(),Targets["Q"],GetMoveSpeed(Targets["Q"]),10000,600,GetCastRange(myHero,_Q),150,false,true)
+    if Targets["Q"] and CanUseSpell(myHero, _Q) == READY and extra.QPARAM.getValue() then
+        local pos = Vector(Targets["Q"])
+        if GetDistance(Targets["Q"]) <= SkillRange("Q") then
+            DrawCircle(qPred.PredPos.x,qPred.PredPos.y,qPred.PredPos.z,100,3,100,0xfffffff0)
+            DrawCircle(qPred.PredPos.x,qPred.PredPos.y,qPred.PredPos.z,120,3,100,0xff00ff00)
+            DrawCircle(pos.x,pos.y,pos.z,45,3,100,0xffff0000)
+        end
+    end
+    if Targets["Q"] and extra.SECOND.getValue() then
+        local pos = Vector(Targets["Q"])
+        if GetDistance(Targets["Q"]) <= SkillRange("Q") then
+            DrawCircle(pos.x,pos.y,pos.z,45,3,100,0x70555500)
+        end
+    end
+end
+
+-- get orbs
+OnObjectLoop(function(Object,myHero)
+    local Obj_Type = GetObjectType(Object);
+    if Obj_Type == Obj_AI_Minion and GetTeam(Object) == GetTeam(myHero) then
+        if GetObjectBaseName(Object) == "Seed" then
+            local origin = GetOrigin(Object);
+            local myscreenpos = WorldToScreen(1,origin);
+            if IsObjectAlive(Object) then
+                if not orbs[GetNetworkID(Object)] then orbs[GetNetworkID(Object)] = Object end
+                if myscreenpos.flag then
+                    --DrawCircle(origin,30,0,10000,0xffffffff); --specify some really bad circle quality like "10000" for best FPS
+                    --DrawText(string.format("NetworkID = 0x%X", GetNetworkID(Object)),12,myscreenpos.x,myscreenpos.y,0xffffffff);
+                    --DrawText(string.format("ObjType  = %s", GetObjectType(Object)),12,myscreenpos.x,myscreenpos.y+10,0xffffffff);
+                    --DrawText(string.format("BaseName  = %s", GetObjectBaseName(Object)),12,myscreenpos.x,myscreenpos.y+20,0xffffffff);
+                    --DrawText(string.format("Name  = %s", GetObjectName(Object)),12,myscreenpos.x,myscreenpos.y+30,0xffffffff);
+                end
+            else
+                if orbs[GetNetworkID(Object)] then orbs[GetNetworkID(Object)] = nil end
+                --DrawText(string.format("Dying NetworkID = 0x%X", GetNetworkID(Object)),12,myscreenpos.x,myscreenpos.y,0xffffffff);
+            end
+        end
+    end
+end)
+
+-- identify grabable by W objects
+function GetGrabableObject()
+    local grabKillableJ
+    local grabKillableM
+    local grabable
+    for _, obj in pairs(objectManager.minions) do
+        if GetTeam(obj) ~= GetTeam(GetMyHero()) and GetDistance(obj) <= GetCastRange(myHero,_W) and IsObjectAlive(obj) and IsVisible(obj) then
+            --Jungle Minions
+            if GetTeam(obj) == 300 then
+                if SkillDamage("w",obj) > GetCurrentHP(obj) then
+                    if grabKillableJ == nil then grabKillableJ = obj
+                    elseif GetMaxHP(grabKillableJ) <= GetMaxHP(obj) then grabKillableJ = obj end
+                end
+                if grabable == nil then grabable = obj
+                elseif GetMaxHP(grabable) <= GetMaxHP(obj) then grabable = obj end
+            --Enemy Minions
+            else
+                if SkillDamage("w",obj) > GetCurrentHP(obj) then
+                    if grabKillableM == nil then grabKillableM = obj
+                    elseif GetMaxHP(grabKillableM) <= GetMaxHP(obj) then grabKillableM = obj end
+                end
+                if grabable == nil then grabable = obj
+                elseif GetTeam(grabable) ~= 300 and GetMaxHP(grabable) <= GetMaxHP(obj) then grabable = obj end
+            end
+        end
+    end
+    --Try To Find Orbs
+    if grabable == nil then
+        for _, orb in pairs(orbs) do
+            if IsObjectAlive(orb) and GetDistance(orb) <= GetCastRange(myHero,_W) then grabable = orb break end
+        end
+    end
+    if IsObjectAlive(grabKillableJ) then return GetOrigin(grabKillableJ)
+    elseif IsObjectAlive(grabKillableM) then return GetOrigin(grabKillableM)
+    elseif IsObjectAlive(grabable) then return GetOrigin(grabable)
+    end
+end
+
+-- move to mousepos
+function Move()
+    local movePos = GenerateMovePos()
+    if not stopMove then
+        if GetDistance(GetMousePos()) > GetHitBox(myHero) then
+            MoveToXYZ(movePos.x, 0, movePos.z)
+        end
+    end
+end
+
+-- check if line intersects circle at any point
+function checkCircleIntersect(P1,P2,C,R)
+    -- compute the euclidean distance between A and B
+    local Ax = P1.x
+    local Bx = P2.x
+    local Ay = P1.y
+    local By = P2.y
+    local Cx = C.x
+    local Cy = C.y
+    local LAB = math.sqrt( (Bx-Ax)*(Bx-Ax) + (By-Ay)*(By-Ay) )
+
+    -- compute the direction vector D from A to B
+    local Dx = (Bx-Ax)/LAB
+    local Dy = (By-Ay)/LAB
+
+    -- Now the line equation is x = Dx*t + Ax, y = Dy*t + Ay with 0 <= t <= 1.
+
+    -- compute the value t of the closest point to the circle center (Cx, Cy)
+    local t = Dx*(Cx-Ax) + Dy*(Cy-Ay)
+
+    -- This is the projection of C on the line from A to B.
+
+    -- compute the coordinates of the point E on line and closest to C
+    local Ex = t*Dx+Ax
+    local Ey = t*Dy+Ay
+
+    -- compute the euclidean distance from E to C
+    local LEC = math.sqrt( (Ex-Cx)*(Ex-Cx) + (Ey-Cy)*(Ey-Cy) )
+
+    -- test if the line intersects the circle
+    if LEC < R then
+
+        -- compute distance from t to circle intersection point
+        local dt = math.sqrt( R*R - LEC*LEC )
+
+        -- compute first intersection point
+        local Fx = (t-dt)*Dx + Ax
+        local Fy = (t-dt)*Dy + Ay
+
+        -- compute second intersection point
+        local Gx = (t+dt)*Dx + Ax
+        local Gy = (t+dt)*Dy + Ay
+        -- notification("line intersects circle")
+        -- else test if the line is tangent to circle
+        return true
+    elseif LEC == R then
+        -- tangent point to circle is E
+        return true
+    else
+        -- line doesn't touch circle
+        -- notification("no intersection")
+        return false
+    end
+end
+
+
+AddGapcloseEvent(_E, GetCastRange(myHero,_E), false)
